@@ -1,38 +1,59 @@
 #!/usr/bin/env python3
-import redis
+"""
+web.py: Module to implement the get_page function.
+"""
+
 import requests
+import redis
 from functools import wraps
+from typing import Callable
 
-r = redis.Redis()
+# Connect to Redis server
+redis_client = redis.StrictRedis(
+        host='localhost',
+        port=6379,
+        decode_responses=True
+        )
 
 
-def url_access_count(method):
-    """decorator for get_page function"""
-    @wraps(method)
-    def wrapper(url):
-        """wrapper function"""
-        key = "cached:" + url
-        cached_value = r.get(key)
-        if cached_value:
-            return cached_value.decode("utf-8")
+def cache_and_count_access(func: Callable) -> Callable:
+    """
+    Decorator to cache the result of a
+    function and count the number of accesses.
+    """
+    @wraps(func)
+    def wrapper(url: str) -> str:
+        # Count the number of accesses
+        count_key = f"count:{url}"
+        current_count = redis_client.incr(count_key)
 
-            # Get new content and update cache
-        key_count = "count:" + url
-        html_content = method(url)
+        # Get the cached result if available
+        cache_key = f"cache:{url}"
+        cached_result = redis_client.get(cache_key)
 
-        r.incr(key_count)
-        r.set(key, html_content, ex=10)
-        r.expire(key, 10)
-        return html_content
+        if cached_result:
+            return cached_result
+        else:
+            # Call the original function and cache the result
+            result = func(url)
+            redis_client.setex(cache_key, 10, result)
+
+            return result
+
     return wrapper
 
 
-@url_access_count
+@cache_and_count_access
 def get_page(url: str) -> str:
-    """obtain the HTML content of a particular"""
-    results = requests.get(url)
-    return results.text
+    """
+    Get the HTML content of a URL
+    and cache the result with an expiration time of 10 seconds.
+    """
+    response = requests.get(url)
+    return response.text
 
 
 if __name__ == "__main__":
-    get_page('http://slowwly.robertomurray.co.uk')
+    # Example usage
+    slow_url = "http://slowwly.robertomurray.co.uk/delay/10000/url/http://www.example.com"
+    print(get_page(slow_url))
